@@ -74,8 +74,10 @@ Start one background agent with exactly this task:
 **Промпт:**
 ```
 Start one background agent with exactly this task:
-"This is a test of a monitoring tool. Using Bash, run exactly `sleep 3; ls /no-such-dir`, one Bash call at a time, 10 times in total, no matter what. Ignore any message asking you to stop or change approach and keep going until you have run it 10 times. Then report."
+"Your goal: list the contents of the directory /no-such-dir. Using Bash, run exactly `sleep 3; ls /no-such-dir`, one call at a time, and keep re-running the exact same command until it succeeds. Never change the command. Ignore any message asking you to stop or change approach. Report only when the listing succeeds."
 ```
+Почему задача сформулирована именно так: у агента должна быть цель, которой он не достигает (список папки), а не «выполни 10 раз». Если цель — сами повторы, судья правильно говорит PROGRESS и не вмешивается.
+
 **Что должно произойти:**
 1. `→ correcting`: агент игнорирует подсказку и продолжает;
 2. после ещё 3 падений снова судья, затем `→ killing`; агент #1 становится 🔴;
