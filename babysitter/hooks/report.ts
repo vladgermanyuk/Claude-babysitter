@@ -32,7 +32,7 @@ export type ReportInput = {
   now: number
 }
 
-export type Totals = { done: number; failed: number; killed: number; corrected: number; needsHuman: number }
+export type Totals = { done: number; failed: number; killed: number; corrected: number; cleared: number; needsHuman: number }
 
 export function totals(agents: AgentRec[], incidents: Incident[]): Totals {
   return {
@@ -40,6 +40,7 @@ export function totals(agents: AgentRec[], incidents: Incident[]): Totals {
     failed: agents.filter(a => a.status === 'failed').length,
     killed: agents.filter(a => a.status === 'killed').length,
     corrected: incidents.filter(i => i.action === 'corrected').length,
+    cleared: incidents.filter(i => i.action === 'cleared').length,
     needsHuman: incidents.filter(i => i.action === 'needs-human').length,
   }
 }
@@ -50,6 +51,7 @@ export function headline(r: ReportInput): string {
   const parts = [`${t.done}/${r.agents.length} done`]
   if (t.corrected > 0) parts.push(`${t.corrected} corrected`)
   if (t.killed > 0) parts.push(`${t.killed} killed`)
+  if (t.cleared > 0) parts.push(`${t.cleared} false alarm${t.cleared === 1 ? '' : 's'} cleared`)
   if (t.needsHuman > 0) parts.push(`⚠️ ${t.needsHuman} need you`)
   if (r.costUsd !== null) parts.push(`session $${r.costUsd.toFixed(2)}`)
   return oneLine(`🍼 ${parts.join(' · ')}`, 190)

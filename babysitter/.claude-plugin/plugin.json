@@ -1,6 +1,6 @@
 {
   "name": "babysitter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Watches your background agents, corrects the ones that loop, stall or error out, and reports when they are done.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -19,6 +19,7 @@
     "runawayCalls": { "type": "number", "title": "Runaway after (calls)", "description": "Tool calls an agent may make before it counts as runaway.", "default": 60 },
     "tokenBudget": { "type": "number", "title": "Token budget per agent", "description": "Tokens an agent may process (input, cache and output) before it counts as over budget. 0 turns it off.", "default": 2000000 },
     "useHaiku": { "type": "boolean", "title": "Diagnose with Haiku", "description": "Ask Haiku to diagnose a stuck agent and to summarise the report.", "default": true },
+    "judge": { "type": "boolean", "title": "Judge before acting", "description": "Before stepping in, ask Haiku whether the flagged agent is really stuck (VERDICT: NO_PROGRESS) or still progressing.", "default": true },
     "push": { "type": "boolean", "title": "Push the report", "description": "Send the final report line as a push notification when you are away.", "default": true }
   }
 }

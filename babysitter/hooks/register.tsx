@@ -5,6 +5,8 @@ import { IGNORED_TOOLS, brief, clip, detect, oneLine, redact, signature, toolInp
 import type { Finding, Thresholds } from './detectors'
 import { correctionMessage, decide, diagnosisPrompt, isMode, respawnPrompt, retriesOf } from './interventions'
 import type { Mode } from './interventions'
+import { judgePrompt, parseVerdict } from './judge'
+import type { Verdict } from './judge'
 import { duration, headline, iconOf, markdown, summaryPrompt } from './report'
 import type { ReportInput } from './report'
 
@@ -35,6 +37,7 @@ function settings(o: PluginOptions) {
     th,
     maxRetries: typeof o.maxRetries === 'number' && o.maxRetries >= 0 ? o.maxRetries : 1,
     useHaiku: o.useHaiku !== false,
+    judge: o.judge !== false,
     push: o.push !== false,
   }
 }
@@ -180,6 +183,8 @@ const busy = new Set<string>()
 let isTicking = false
 let isReporting = false
 let lastHeadline: string | undefined
+/** The judge's last call, for /babysit judge. */
+let lastJudge: { who: string; prompt: string; answer: string } | null = null
 
 // ---------- bookkeeping ----------
 
@@ -232,9 +237,58 @@ async function diagnose($: $, a: AgentRec, f: Finding): Promise<string> {
   }
 }
 
+function stampOf(now: number): string {
+  return new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+}
+
+/**
+ * Step 0: before touching an agent, ask Haiku whether it is really stuck.
+ * The rules are cheap and jumpy; the judge reads the actual calls. Null when
+ * there is no judge (off, or no answer in the format): the rules decide alone.
+ */
+async function askJudge($: $, a: AgentRec, f: Finding): Promise<Verdict | null> {
+  if (!cfg.useHaiku || !cfg.judge) return null
+  const now = await $.clock.now()
+  const prompt = judgePrompt(a, f, now)
+  let answer = ''
+  try {
+    const r = await $.model.complete({ model: 'haiku', prompt, maxTokens: 250 })
+    answer = r.isAnswered ? r.text.trim() : ''
+  } catch {
+    answer = ''
+  }
+  const verdict = parseVerdict(answer)
+  lastJudge = { who: label(a), prompt, answer: answer || '(no answer)' }
+  $.ui.log(verdict === null
+    ? `🍼 judge on ${label(a)}: no verdict, the rules decide`
+    : `🍼 judge on ${label(a)}: ${verdict.isStuck ? 'NO_PROGRESS' : 'PROGRESS'}: ${verdict.reason}`)
+  try {
+    const path = `${await $.session.cwd()}/.babysitter/judge/${stampOf(now)}-${a.num}.md`
+    await $.fs.write(path, `# Judge on ${label(a)}\n\n## Sent\n\n${prompt}\n\n## Answer\n\n${lastJudge.answer}\n`)
+  } catch {
+    // the log is for the curious; the decision stands without it
+  }
+  return verdict
+}
+
+/** The judge says it is moving: leave it alone and re-arm the rules from here. */
+async function clear($: $, a: AgentRec, f: Finding, reason: string) {
+  const now = await $.clock.now()
+  await patch($, a.id, x => ({
+    ...x,
+    recent: [],
+    consecutiveErrors: 0,
+    lastActivityAt: now,
+    armedAt: now,
+    armedCalls: x.toolCalls,
+    armedTokens: x.tokens,
+  }))
+  await incident($, a, f.kind, `judge: still progressing (${reason})`, 'cleared')
+}
+
 /** Step 1: write the fix into the agent's own conversation. */
-async function correct($: $, a: AgentRec, f: Finding): Promise<boolean> {
-  const diagnosis = await diagnose($, a, f)
+async function correct($: $, a: AgentRec, f: Finding, fix = ''): Promise<boolean> {
+  const diagnosis = fix !== '' ? fix : await diagnose($, a, f)
   const text = correctionMessage(f, diagnosis)
   let isWritten = false
   try {
@@ -305,7 +359,7 @@ async function spawnRetry($: $, a: AgentRec, prompt: string): Promise<string | n
 }
 
 /** Step 3: start the task again with what went wrong spelled out. */
-async function respawn($: $, a: AgentRec, f: Finding) {
+async function respawn($: $, a: AgentRec, f: Finding, fix = '') {
   const agents = await getAgents($)
   const root = agents[a.rootId] ?? a
   const retries = retriesOf(agents, a.rootId)
@@ -314,7 +368,7 @@ async function respawn($: $, a: AgentRec, f: Finding) {
     await incident($, a, f.kind, `still stuck after ${retries} respawn(s): ${f.detail}`, 'needs-human')
     return
   }
-  const prompt = respawnPrompt(root.prompt, a, f, await diagnose($, a, f))
+  const prompt = respawnPrompt(root.prompt, a, f, fix !== '' ? fix : await diagnose($, a, f))
   announce($, a, f, `respawning ↻ with a corrected prompt`)
   const refused = await spawnRetry($, a, prompt)
   if (refused === null) {
@@ -332,6 +386,18 @@ async function escalate($: $, id: string, f: Finding) {
   const step = decide(cfg.mode, a.stage, f.kind !== 'manual' && a.warned.includes(f.kind))
 
   if (step === 'skip') return
+
+  let fix = ''
+  if (f.kind !== 'manual') {
+    const verdict = await askJudge($, a, f)
+    if (verdict !== null && !verdict.isStuck) {
+      announce($, a, f, 'judge says it is progressing: leaving it alone')
+      await clear($, a, f, verdict.reason)
+      return
+    }
+    fix = verdict?.fix ?? ''
+  }
+
   if (step === 'warn') {
     announce($, a, f, 'flagged')
     const kind = f.kind
@@ -341,13 +407,13 @@ async function escalate($: $, id: string, f: Finding) {
   }
   if (step === 'correct') {
     announce($, a, f, 'correcting: writing a fix into its conversation')
-    const isWritten = await correct($, a, f)
+    const isWritten = await correct($, a, f, fix)
     // A correction that cannot reach the agent: in correct mode, go straight to the next rung.
     if (isWritten || cfg.mode !== 'correct') return
   }
   announce($, a, f, 'killing')
   const isStopped = await kill($, a, f)
-  if (isStopped && step !== 'kill') await respawn($, a, f)
+  if (isStopped && step !== 'kill') await respawn($, a, f, fix)
 }
 
 function guarded($: $, id: string, work: () => Promise<unknown>) {
@@ -392,8 +458,7 @@ async function report($: $, batch: AgentRec[], now: number): Promise<string> {
 
   let savedTo = ''
   try {
-    const stamp = new Date(now).toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const path = `${await $.session.cwd()}/.babysitter/reports/${stamp}.md`
+    const path = `${await $.session.cwd()}/.babysitter/reports/${stampOf(now)}.md`
     await $.fs.write(path, md)
     savedTo = path
   } catch (err) {
@@ -498,7 +563,7 @@ export const register: Register = (on, options) => {
     await hydrate($)
     await $.command.register({
       name: 'babysit',
-      description: 'Babysitter: open the agents pane (or: report · on · off · mode <correct|kill|nudge|warn> · json)',
+      description: 'Babysitter: open the agents pane (or: report · judge · on · off · mode <correct|kill|nudge|warn> · json)',
     })
     $.clock.every(TICK_MS, () => void tick($))
     return next(e)
@@ -618,6 +683,10 @@ export const register: Register = (on, options) => {
       if (!isMode(mode)) return { text: `Mode is ${cfg.mode}. Use /babysit mode correct | kill | nudge | warn.` }
       cfg = { ...cfg, mode }
       return { text: `Babysitter mode: ${mode} (this session).` }
+    }
+    if (arg === 'judge') {
+      if (lastJudge === null) return { text: 'The judge has not been called yet.' }
+      return { text: `Judge on ${lastJudge.who}\n\n── sent to Haiku ──\n${lastJudge.prompt}\n\n── answer ──\n${lastJudge.answer}` }
     }
     if (arg === 'json') {
       return { text: JSON.stringify({ mode: cfg.mode, isEnabled: mem.isEnabled, agents: mem.agents, incidents: mem.incidents }) }

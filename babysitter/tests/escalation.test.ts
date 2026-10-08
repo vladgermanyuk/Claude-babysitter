@@ -8,7 +8,7 @@ import type { On } from 'claude-code'
 
 import type { AgentRec, Incident } from '../types'
 
-function world(on: On, opts: { refuseRespawn?: boolean } = {}) {
+function world(on: On, opts: { refuseRespawn?: boolean; judge?: string } = {}) {
   const stopped: string[] = []
   const spawned: { prompt: string; description: string }[] = []
   const toasts: string[] = []
@@ -31,6 +31,13 @@ function world(on: On, opts: { refuseRespawn?: boolean } = {}) {
     return { value: undefined } as never
   })
   on('turn.complete', ($, e) => ({ text: e.answer }))
+  const judged: string[] = []
+  on('model.complete', ($, e) => {
+    if (!e.prompt.includes('VERDICT:')) return { value: { isAnswered: false, reason: 'empty-reply', usage: {} } } as never
+    judged.push(e.prompt)
+    if (opts.judge === undefined) return { value: { isAnswered: false, reason: 'empty-reply', usage: {} } } as never
+    return { value: { isAnswered: true, text: opts.judge, usage: {} } } as never
+  })
   on('agent.spawn', ($, e) => {
     if (opts.refuseRespawn === true && spawned.length > 0) return { deny: 'auto mode classifier gave no verdict' }
     spawned.push({ prompt: e.prompt, description: e.description })
@@ -45,7 +52,7 @@ function world(on: On, opts: { refuseRespawn?: boolean } = {}) {
     if (e.tool === 'PushNotification') return { result: {}, text: 'sent' } as never
     return { isError: true, result: 'ls: /x: No such file or directory', text: 'ls: /x: No such file or directory' } as never
   })
-  return { stopped, spawned, toasts, files }
+  return { stopped, spawned, toasts, files, judged }
 }
 
 const OPTIONS = { useHaiku: false, push: false }
@@ -231,5 +238,46 @@ describe('report', () => {
     await ($ as Engine).turn.complete({ answer: 'Done.', durationMs: 5_000, isAborted: false, turnId: 't1', agentId: 'ag1', reason: 'answer' })
     await clock.advance(6_000)
     expect(w.files).toHaveLength(0)
+  })
+})
+
+describe('judge', () => {
+  test('v2: the judge says it is progressing, so nothing is touched', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on, { judge: 'VERDICT: PROGRESS\nREASON: Each run edits the code first.\nFIX: -' })
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+    expect(w.judged).toHaveLength(1)
+    expect(w.stopped).toEqual([])
+    expect(w.spawned).toHaveLength(1)
+    const { incidents } = await state($)
+    expect(incidents.map(i => i.action)).toEqual(['cleared'])
+    expect(incidents[0]?.detail).toContain('Each run edits the code first.')
+  })
+
+  test('v2: NO_PROGRESS lets the ladder act, with the judge\'s fix in the respawn', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on, { judge: 'VERDICT: NO_PROGRESS\nREASON: Same ECONNREFUSED every time.\nFIX: Mock fetch in the test.' })
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual(['ag1'])
+    expect(w.spawned[1]?.prompt).toContain('Diagnosis: Mock fetch in the test.')
+  })
+
+  test('/babysit judge shows what was sent and what came back', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    world(on, { judge: 'VERDICT: NO_PROGRESS\nREASON: Stuck.\nFIX: Stop.' })
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+    const r = await ($ as Engine).command.run({ command: 'babysit', args: 'judge', origin: { kind: 'composer' } })
+    expect(r.text).toContain('Judge on #1 Fix flaky test')
+    expect(r.text).toContain('── sent to Haiku ──')
+    expect(r.text).toContain('VERDICT: NO_PROGRESS')
   })
 })

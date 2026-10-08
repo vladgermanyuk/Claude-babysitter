@@ -1,6 +1,6 @@
 export type AgentStatus = 'running' | 'completed' | 'failed' | 'killed'
 export type DetectorKind = 'loop' | 'errors' | 'stall' | 'runaway' | 'budget'
-export type ActionKind = 'warned' | 'corrected' | 'killed' | 'respawned' | 'needs-human'
+export type ActionKind = 'warned' | 'cleared' | 'corrected' | 'killed' | 'respawned' | 'needs-human'
 
 /** One tool call of a watched agent. `sig` is tool + input, for loop detection. */
 export type Call = {
