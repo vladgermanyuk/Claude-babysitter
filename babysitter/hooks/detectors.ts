@@ -35,8 +35,12 @@ export function toolInput(e: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(e).filter(([k]) => !RESERVED.has(k)))
 }
 
+/** Labels the model writes fresh on each call ("Attempt 3"): not part of what the call does. */
+const COSMETIC = new Set(['description'])
+
 export function signature(tool: string, input: Record<string, unknown>): string {
-  return `${tool}:${stableStringify(input)}`
+  const what = Object.fromEntries(Object.entries(input).filter(([k]) => !COSMETIC.has(k)))
+  return `${tool}:${stableStringify(what)}`
 }
 
 export function oneLine(text: string, max: number): string {

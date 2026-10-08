@@ -166,7 +166,7 @@ function nextNum(): number {
 
 /** How the screen names an agent: `#3 Fix flaky test`. */
 function label(a: AgentRec): string {
-  return `#${a.num} ${oneLine(a.description, 40)}`
+  return `#${a.num} ${oneLine(a.description, 28)}`
 }
 
 function tokensOf(u: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }): number {
@@ -231,7 +231,7 @@ async function guardCall($: $, a: AgentRec, tool: string, input: Record<string, 
 
 /** One line in the transcript, said before the mod acts: what it saw and what it does next. */
 function announce($: $, a: AgentRec, f: Finding, doing: string) {
-  $.ui.log(`🍼 ${label(a)} · ${f.kind === 'manual' ? 'you asked' : `stuck (${f.kind}: ${oneLine(f.detail, 140)})`} → ${doing}`)
+  $.ui.log(`🍼 ${label(a)} · ${f.kind === 'manual' ? 'you asked' : `${f.kind}: ${oneLine(f.detail, 80)}`} → ${doing}`)
 }
 
 async function refreshStatus($: $) {
@@ -295,7 +295,7 @@ async function askJudge($: $, a: AgentRec, f: Finding): Promise<Verdict | null> 
   lastJudge = { who: label(a), prompt, answer: answer || '(no answer)' }
   $.ui.log(verdict === null
     ? `🍼 judge on ${label(a)}: no verdict, the rules decide`
-    : `🍼 judge on ${label(a)}: ${verdict.isStuck ? 'NO_PROGRESS' : 'PROGRESS'}: ${verdict.reason}`)
+    : `🍼 judge on ${label(a)}: ${verdict.isStuck ? 'NO_PROGRESS' : 'PROGRESS'}: ${oneLine(verdict.reason, 100)}`)
   try {
     const path = `${await $.session.cwd()}/.babysitter/judge/${stampOf(now)}-${a.num}.md`
     await $.fs.write(path, `# Judge on ${label(a)}\n\n## Sent\n\n${prompt}\n\n## Answer\n\n${lastJudge.answer}\n`)

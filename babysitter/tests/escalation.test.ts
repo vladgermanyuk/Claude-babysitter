@@ -1,8 +1,8 @@
-// The test engine of this build differs from a live session in three ways the
-// tests work around: it has no $.session.append (a correction cannot be written,
-// so correct mode goes straight to kill + respawn), no $.state (the tests read the
-// mod through /babysit json), and it does not apply test options (modes are set
-// with /babysit mode). Writing into a live agent is covered by the live run (L/C1).
+// Engine tests for the ladder. Beneath the plugin, `world` answers like a session:
+// agents whose every Bash call fails, a TaskStop that works, a judge whose verdict
+// each test picks (none by default: the rules then decide alone). The mod is read
+// through its own `/babysit json`. (Since 2.1.294 the test engine writes
+// corrections with $.session.append and applies test options, as a session does.)
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
@@ -57,7 +57,7 @@ function world(on: On, opts: { refuseRespawn?: boolean; judge?: string } = {}) {
   return { stopped, spawned, toasts, files, judged, ran }
 }
 
-const OPTIONS = { useHaiku: false, push: false }
+const OPTIONS = { push: false }
 
 // The engine's $ as a test holds it; typed loosely so helpers stay short.
 type Engine = any
@@ -118,14 +118,18 @@ describe('tracking', () => {
 })
 
 describe('Kill & Correct', () => {
-  test('C4/C6: a looping agent is stopped and respawned with what went wrong', { options: OPTIONS }, async ($, on) => {
+  test('C1→C4→C6: correct in place; stuck again → kill and respawn with what went wrong', { options: OPTIONS }, async ($, on) => {
     const clock = mock.clock(on, { now: 1_000_000 })
     const w = world(on)
     await start($)
     await spawnAgent($)
     await loop($, 'ag1', 3)
     await clock.advance(2_100)
+    expect((await state($)).incidents.map(i => i.action)).toEqual(['corrected'])
+    expect(w.stopped).toEqual([])
 
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
     expect(w.stopped).toEqual(['ag1'])
     expect(w.spawned).toHaveLength(2)
     expect(w.spawned[1]?.description).toBe('↻ Fix flaky test')
@@ -135,23 +139,22 @@ describe('Kill & Correct', () => {
 
     const { agents, incidents } = await state($)
     expect(agents.ag1?.status).toBe('killed')
-    expect(incidents.map(i => i.action)).toEqual(['warned', 'killed', 'respawned'])
+    expect(incidents.map(i => i.action)).toEqual(['corrected', 'killed', 'respawned'])
   })
-
   test('C7: a refused respawn keeps the corrected prompt for the Respawn button', { options: OPTIONS }, async ($, on) => {
     const clock = mock.clock(on, { now: 1_000_000 })
     world(on, { refuseRespawn: true })
     await start($)
     await spawnAgent($)
-    await loop($, 'ag1', 3)
-    await clock.advance(2_100)
-
+    for (let round = 0; round < 2; round++) {
+      await loop($, 'ag1', 3)
+      await clock.advance(2_100)
+    }
     const { agents, incidents } = await state($)
     expect(agents.ag1?.pendingRespawn).toContain('A previous attempt')
     expect(incidents[incidents.length - 1]?.action).toBe('needs-human')
     expect(incidents[incidents.length - 1]?.detail).toContain('Press Respawn')
   })
-
   test('D10: one problem, one intervention: no repeat while it is in hand', { options: OPTIONS }, async ($, on) => {
     const clock = mock.clock(on, { now: 1_000_000 })
     const w = world(on)
@@ -161,8 +164,8 @@ describe('Kill & Correct', () => {
     await clock.advance(2_100)
     await clock.advance(2_100)
     await clock.advance(2_100)
-    expect(w.stopped).toEqual(['ag1'])
-    expect(w.spawned).toHaveLength(2)
+    expect((await state($)).incidents.map(i => i.action)).toEqual(['corrected'])
+    expect(w.stopped).toEqual([])
   })
 })
 
@@ -259,17 +262,19 @@ describe('judge', () => {
     expect(incidents[0]?.detail).toContain('Each run edits the code first.')
   })
 
-  test('v2: NO_PROGRESS lets the ladder act, with the judge\'s fix in the respawn', { options: OPTIONS }, async ($, on) => {
+  test('v2: NO_PROGRESS lets the ladder act, with the judge\'s fix in the correction and the respawn', { options: OPTIONS }, async ($, on) => {
     const clock = mock.clock(on, { now: 1_000_000 })
     const w = world(on, { judge: 'VERDICT: NO_PROGRESS\nREASON: Same ECONNREFUSED every time.\nFIX: Mock fetch in the test.' })
     await start($)
     await spawnAgent($)
-    await loop($, 'ag1', 3)
-    await clock.advance(2_100)
+    for (let round = 0; round < 2; round++) {
+      await loop($, 'ag1', 3)
+      await clock.advance(2_100)
+    }
+    expect(w.judged).toHaveLength(2)
     expect(w.stopped).toEqual(['ag1'])
     expect(w.spawned[1]?.prompt).toContain('Diagnosis: Mock fetch in the test.')
   })
-
   test('/babysit judge shows what was sent and what came back', { options: OPTIONS }, async ($, on) => {
     const clock = mock.clock(on, { now: 1_000_000 })
     world(on, { judge: 'VERDICT: NO_PROGRESS\nREASON: Stuck.\nFIX: Stop.' })

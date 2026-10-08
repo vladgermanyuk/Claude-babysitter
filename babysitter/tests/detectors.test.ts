@@ -79,6 +79,10 @@ describe('stall and runaway', () => {
 })
 
 describe('labels and secrets', () => {
+  test('signature ignores the label the model writes on each call', () => {
+    expect(signature('Bash', { command: 'ls /x', description: 'Attempt 3' })).toBe(signature('Bash', { command: 'ls /x', description: 'Attempt 4' }))
+  })
+
   test('signature ignores key order', () => {
     expect(signature('Bash', { command: 'ls', timeout: 5 })).toBe(signature('Bash', { timeout: 5, command: 'ls' }))
   })

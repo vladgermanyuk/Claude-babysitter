@@ -12,9 +12,11 @@ export type Verdict = { isStuck: boolean; reason: string; fix: string }
 export function judgePrompt(a: AgentRec, f: Finding, now: number): string {
   return [
     'You supervise a coding sub-agent that is working on its own. A rule flagged it as possibly stuck.',
-    'Decide from its recent activity whether it is still making real progress toward the task.',
+    'Decide from its recent activity whether it is still making real progress toward the GOAL of the task.',
+    'Judge outcomes, not obedience: an agent can follow its instructions to the letter and still get nowhere.',
     'Repeating a command after changing the code it tests IS progress if the output changes. Re-running the',
-    'same failing command with the same error, or waiting on something that will never answer, is NOT.',
+    'same failing command with the same error is NOT progress, even if the task says to retry; neither is',
+    'waiting on something that will never answer.',
     '',
     `Task: ${redact(oneLine(a.prompt, 600))}`,
     `Flagged: ${f.kind}: ${f.detail}`,

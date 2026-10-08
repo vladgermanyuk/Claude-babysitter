@@ -31,4 +31,5 @@ test('the judge sees the task, the flag and the calls with their errors', () => 
   expect(prompt).toContain('Flagged: loop: ran it 3 times')
   expect(prompt).toContain('- Bash node --test test/rates.test.js → ERROR: No such file or directory')
   expect(prompt).toContain('VERDICT: NO_PROGRESS or PROGRESS')
+  expect(prompt).toContain('even if the task says to retry')
 })
