@@ -160,8 +160,14 @@ async function patch($: $, id: string, fn: (a: AgentRec) => AgentRec): Promise<v
   })
 }
 
+/**
+ * Taken synchronously, before any await: four agents spawned at once each get
+ * their own number (reading the max from mem alone gave all four #1).
+ */
+let lastNum = 0
 function nextNum(): number {
-  return Object.values(mem.agents).reduce((n, a) => Math.max(n, a.num), 0) + 1
+  lastNum = Math.max(lastNum, ...Object.values(mem.agents).map(a => a.num)) + 1
+  return lastNum
 }
 
 /** How the screen names an agent: `#3 Fix flaky test`. */
@@ -402,7 +408,8 @@ async function spawnRetry($: $, a: AgentRec, prompt: string): Promise<string | n
   if (id === undefined) return null // started, but the engine gave no id to follow it by
   // A plugin's own spawn skips its own agent.spawn hook: record the respawn here.
   if (mem.agents[id] === undefined) {
-    const rec = newAgent(id, nextNum(), await $.clock.now(), {
+    const num = nextNum()
+    const rec = newAgent(id, num, await $.clock.now(), {
       description: `↻ ${root.description}`, type: a.type, model: r.model, prompt, background: true, parentId: a.parentId,
     })
     await updateAgents($, all => ({ ...all, [id]: rec }))
@@ -607,6 +614,7 @@ export const register: Register = (on, options) => {
   mem.isEnabled = true
   mem.reportedIds = []
   mem.now = 0
+  lastNum = 0
   busy.clear()
   isTicking = false
   isReporting = false
@@ -628,6 +636,7 @@ export const register: Register = (on, options) => {
       await updateAgents($, () => ({}))
       await updateIncidents($, () => [])
       await updateReported($, () => [])
+      lastNum = 0
       lastHeadline = undefined
       $.ui.status(undefined)
     }
@@ -637,7 +646,8 @@ export const register: Register = (on, options) => {
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
     if (r.deny !== undefined || r.agentId === undefined) return r
-    const rec = newAgent(r.agentId, nextNum(), await $.clock.now(), {
+    const num = nextNum()
+    const rec = newAgent(r.agentId, num, await $.clock.now(), {
       description: e.description,
       type: e.subagentType,
       model: r.model,

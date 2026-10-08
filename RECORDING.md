@@ -38,7 +38,7 @@
 
 Промпт в основную сессию (вставить целиком):
 
-> Start 4 background agents in parallel, one per task, in this repo:
+> Start 4 background agents in parallel, one per task, in this repo. Give each agent its task word for word: add no instructions of your own, and don't ask me anything; the agents decide for themselves.
 > 1. **Date tests**: add unit tests for src/date.js in test/date.test.js and make them pass.
 > 2. **Fix rates test**: make `node --test test/rates.test.js` pass.
 > 3. **Health check**: start the server with `npm start` and confirm that GET /health returns {"ok":true}.

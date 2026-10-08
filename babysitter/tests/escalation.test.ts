@@ -320,3 +320,12 @@ test('/babysit json shows the settings in force', { options: OPTIONS }, async ($
   expect(settings.th.stallMs).toBe(180_000)
   expect(settings.guard).toBe('block')
 })
+
+test('agents started at once get their own numbers', { options: OPTIONS }, async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  world(on)
+  await start($)
+  await Promise.all(['Date tests', 'Fix rates', 'Health check', 'CI green'].map(d => spawnAgent($, d)))
+  const nums = Object.values((await state($)).agents).map(a => a.num).sort()
+  expect(nums).toEqual([1, 2, 3, 4])
+})
