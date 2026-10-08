@@ -367,6 +367,12 @@ async function kill($: $, a: AgentRec, f: Finding): Promise<boolean> {
   const now = await $.clock.now()
   await patch($, a.id, x => ({ ...x, status: 'killed', stage: 2, endedAt: now }))
   await incident($, a, f.kind, f.detail, 'killed')
+  // The parent only hears "stopped": tell it who stopped the agent and why.
+  try {
+    await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: `[babysitter] I stopped background agent ${label(a)} because it was stuck (${f.kind}: ${oneLine(f.detail, 200)}). If I respawn it, I will tell you its result when it finishes.` }] } })
+  } catch {
+    // the transcript line and the pane already say it
+  }
   return true
 }
 
