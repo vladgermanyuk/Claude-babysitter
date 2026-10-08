@@ -1,0 +1,235 @@
+// The test engine of this build differs from a live session in three ways the
+// tests work around: it has no $.session.append (a correction cannot be written,
+// so correct mode goes straight to kill + respawn), no $.state (the tests read the
+// mod through /babysit json), and it does not apply test options (modes are set
+// with /babysit mode). Writing into a live agent is covered by the live run (L/C1).
+import { describe, expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+
+import type { AgentRec, Incident } from '../types'
+
+function world(on: On, opts: { refuseRespawn?: boolean } = {}) {
+  const stopped: string[] = []
+  const spawned: { prompt: string; description: string }[] = []
+  const toasts: string[] = []
+  const files: { path: string; text: string }[] = []
+  let n = 0
+
+  on('session.start', ($, e) => ({ cwd: e.cwd }) as never)
+  on('command.register', () => ({ value: {} }) as never)
+  on('agent.list', () => ({ value: [] }) as never)
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
+  on('ui.status', () => ({ value: undefined }) as never)
+  on('ui.log', () => ({ value: undefined }) as never)
+  on('session.cwd', () => ({ value: '/tmp/demo' }) as never)
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: [], cost: { usd: 0.42 } } }) as never)
+  on('fs.write', ($, e) => {
+    files.push(e as unknown as { path: string; text: string })
+    return { value: undefined } as never
+  })
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('agent.spawn', ($, e) => {
+    if (opts.refuseRespawn === true && spawned.length > 0) return { deny: 'auto mode classifier gave no verdict' }
+    spawned.push({ prompt: e.prompt, description: e.description })
+    n += 1
+    return { model: 'claude-haiku-4-5', agentId: `ag${n}` }
+  })
+  on('tool.call', ($, e) => {
+    if (e.tool === 'TaskStop') {
+      stopped.push(String(e.task_id))
+      return { result: { message: 'stopped' }, text: 'stopped' } as never
+    }
+    if (e.tool === 'PushNotification') return { result: {}, text: 'sent' } as never
+    return { isError: true, result: 'ls: /x: No such file or directory', text: 'ls: /x: No such file or directory' } as never
+  })
+  return { stopped, spawned, toasts, files }
+}
+
+const OPTIONS = { useHaiku: false, push: false }
+
+// The engine's $ as a test holds it; typed loosely so helpers stay short.
+type Engine = any
+
+async function start($: Engine) {
+  await $.session.start({ cwd: '/tmp/demo', surface: null, isInteractive: false })
+}
+
+async function spawnAgent($: Engine, description = 'Fix flaky test') {
+  await $.agent.spawn({
+    tool_use_id: `t-${description}`, prompt: `Task: ${description}`, description, subagentType: 'general-purpose',
+    provider: { plugin: 'engine', tier: 'core' }, parentModel: 'claude-opus-5-5', background: true, fork: false,
+  })
+}
+
+let seq = 0
+async function loop($: Engine, agentId: string, times: number) {
+  for (let i = 0; i < times; i++) {
+    seq += 1
+    await $.tool.call({ tool: 'Bash', command: 'ls /x', agentId, tool_use_id: `c${seq}` })
+  }
+}
+
+async function setMode($: Engine, mode: string) {
+  await $.command.run({ command: 'babysit', args: `mode ${mode}`, origin: { kind: 'composer' } })
+}
+
+/** What the mod holds, through its own `/babysit json`. */
+async function state($: Engine): Promise<{ mode: string; agents: Record<string, AgentRec>; incidents: Incident[] }> {
+  const r = await $.command.run({ command: 'babysit', args: 'json', origin: { kind: 'composer' } })
+  return JSON.parse(r.text)
+}
+
+describe('tracking', () => {
+  test('T1/T2: a spawned agent and its calls are recorded', { options: OPTIONS }, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    world(on)
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 2)
+    const { agents } = await state($)
+    expect(agents.ag1?.description).toBe('Fix flaky test')
+    expect(agents.ag1?.toolCalls).toBe(2)
+    expect(agents.ag1?.consecutiveErrors).toBe(2)
+    expect(agents.ag1?.recent[1]?.brief).toBe('Bash ls /x')
+  })
+
+  test('T6/T7: the main loop and unknown agents are not tracked', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    for (let i = 0; i < 4; i++) await ($ as Engine).tool.call({ tool: 'Bash', command: 'ls /x', tool_use_id: `m${i}` })
+    await loop($, 'workflow-agent', 4)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual([])
+    expect(Object.keys((await state($)).agents)).toEqual([])
+  })
+})
+
+describe('Kill & Correct', () => {
+  test('C4/C6: a looping agent is stopped and respawned with what went wrong', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+
+    expect(w.stopped).toEqual(['ag1'])
+    expect(w.spawned).toHaveLength(2)
+    expect(w.spawned[1]?.description).toBe('↻ Fix flaky test')
+    expect(w.spawned[1]?.prompt).toContain('Task: Fix flaky test')
+    expect(w.spawned[1]?.prompt).toContain('A previous attempt at this task was stopped')
+    expect(w.spawned[1]?.prompt).toContain('Bash ls /x → ERROR')
+
+    const { agents, incidents } = await state($)
+    expect(agents.ag1?.status).toBe('killed')
+    expect(incidents.map(i => i.action)).toEqual(['warned', 'killed', 'respawned'])
+  })
+
+  test('C7: a refused respawn keeps the corrected prompt for the Respawn button', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    world(on, { refuseRespawn: true })
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+
+    const { agents, incidents } = await state($)
+    expect(agents.ag1?.pendingRespawn).toContain('A previous attempt')
+    expect(incidents[incidents.length - 1]?.action).toBe('needs-human')
+    expect(incidents[incidents.length - 1]?.detail).toContain('Press Respawn')
+  })
+
+  test('D10: one problem, one intervention: no repeat while it is in hand', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+    await clock.advance(2_100)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual(['ag1'])
+    expect(w.spawned).toHaveLength(2)
+  })
+})
+
+describe('modes', () => {
+  test('the mode can be switched for the session', { options: OPTIONS }, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    world(on)
+    await start($)
+    await setMode($, 'warn')
+    expect((await state($)).mode).toBe('warn')
+  })
+
+  test('C12: warn mode flags once and never touches the agent', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await setMode($, 'warn')
+    await spawnAgent($)
+    await loop($, 'ag1', 6)
+    await clock.advance(2_100)
+    await clock.advance(2_100)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual([])
+    expect(w.spawned).toHaveLength(1)
+    expect((await state($)).incidents.map(i => i.action)).toEqual(['warned'])
+  })
+
+  test('C12: kill mode stops at once and does not respawn', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await setMode($, 'kill')
+    await spawnAgent($)
+    await loop($, 'ag1', 3)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual(['ag1'])
+    expect(w.spawned).toHaveLength(1)
+  })
+
+  test('UI7: /babysit off keeps tracking but never steps in', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await ($ as Engine).command.run({ command: 'babysit', args: 'off', origin: { kind: 'composer' } })
+    await spawnAgent($)
+    await loop($, 'ag1', 4)
+    await clock.advance(2_100)
+    expect(w.stopped).toEqual([])
+    expect((await state($)).agents.ag1?.toolCalls).toBe(4)
+  })
+})
+
+describe('report', () => {
+  test('R1/R4: one report, saved to a file, once every background agent is done', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await spawnAgent($, 'Add date tests')
+    await ($ as Engine).turn.complete({ answer: 'Added 4 tests.', durationMs: 5_000, isAborted: false, turnId: 't1', agentId: 'ag1', reason: 'answer' })
+    await clock.advance(6_000)
+    await clock.advance(6_000)
+
+    expect(w.files).toHaveLength(1)
+    expect(JSON.stringify(w.files[0])).toContain('/tmp/demo/.babysitter/reports/')
+    expect(JSON.stringify(w.files[0])).toContain('Add date tests')
+    expect(w.toasts).toContain('🍼 1/1 done · session $0.42')
+  })
+
+  test('R2: no report while an agent still runs', { options: OPTIONS }, async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await spawnAgent($, 'Add date tests')
+    await spawnAgent($, 'Refactor module X')
+    await ($ as Engine).turn.complete({ answer: 'Done.', durationMs: 5_000, isAborted: false, turnId: 't1', agentId: 'ag1', reason: 'answer' })
+    await clock.advance(6_000)
+    expect(w.files).toHaveLength(0)
+  })
+})

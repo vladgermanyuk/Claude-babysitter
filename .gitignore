@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+.babysitter/
+spike-events.jsonl
+babysitter/.claude-plugin/types/
+demo/

@@ -1,0 +1,11 @@
+{
+  "name": "babysitter-local",
+  "owner": { "name": "babysitter" },
+  "plugins": [
+    {
+      "name": "babysitter",
+      "source": "./babysitter",
+      "description": "Watches your background agents, corrects the ones that loop, stall or error out, and reports when they are done."
+    }
+  ]
+}

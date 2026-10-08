@@ -1,0 +1,24 @@
+{
+  "name": "babysitter",
+  "version": "0.1.0",
+  "description": "Watches your background agents, corrects the ones that loop, stall or error out, and reports when they are done.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mode": {
+      "type": "string",
+      "title": "Intervention mode",
+      "description": "correct: write a fix into the agent, then kill and respawn it if it stays stuck. kill: stop at once. nudge: write a fix only. warn: only flag it.",
+      "options": ["correct", "kill", "nudge", "warn"],
+      "default": "correct"
+    },
+    "maxRetries": { "type": "number", "title": "Respawns per task", "description": "How many times a stopped task is respawned with a corrected prompt.", "default": 1 },
+    "loopRepeats": { "type": "number", "title": "Loop: identical failing calls", "description": "Identical failing tool calls (in the last 8) that count as a loop.", "default": 3 },
+    "errorStreak": { "type": "number", "title": "Error streak", "description": "Tool errors in a row that count as stuck.", "default": 4 },
+    "stallSeconds": { "type": "number", "title": "Stall after (s)", "description": "Seconds with no tool activity before an agent counts as stalled.", "default": 180 },
+    "runawayMinutes": { "type": "number", "title": "Runaway after (min)", "description": "Minutes an agent may run before it counts as runaway.", "default": 15 },
+    "runawayCalls": { "type": "number", "title": "Runaway after (calls)", "description": "Tool calls an agent may make before it counts as runaway.", "default": 60 },
+    "tokenBudget": { "type": "number", "title": "Token budget per agent", "description": "Tokens an agent may process (input, cache and output) before it counts as over budget. 0 turns it off.", "default": 2000000 },
+    "useHaiku": { "type": "boolean", "title": "Diagnose with Haiku", "description": "Ask Haiku to diagnose a stuck agent and to summarise the report.", "default": true },
+    "push": { "type": "boolean", "title": "Push the report", "description": "Send the final report line as a push notification when you are away.", "default": true }
+  }
+}
