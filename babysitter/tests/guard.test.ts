@@ -49,6 +49,22 @@ describe('writes', () => {
     expect(checkGuard('MultiEdit', { file_path: `${ROOT}/test/a.spec.ts`, edits: [{ old_string: 'it(', new_string: 'xit(' }] }, ROOT)).toContain('.skip')
   })
 
+  test('editing a test case out of a test file is refused', () => {
+    const old = "test('applies a 60% clearance discount', () => {\n  assert.equal(applyDiscount(10_000, 60), 4_000)\n})\n"
+    expect(checkGuard('Edit', { file_path: `${ROOT}/test/price.test.js`, old_string: old, new_string: '' }, ROOT)).toBe('deleting 1 test from price.test.js')
+  })
+
+  test('a Write that drops tests from an existing file is refused', () => {
+    const current = "test('a', () => {})\ntest('b', () => {})\n"
+    expect(checkGuard('Write', { file_path: `${ROOT}/test/a.test.js`, content: "test('a', () => {})\n" }, ROOT, current)).toBe('deleting 1 test from a.test.js')
+  })
+
+  test('changing an expectation or adding tests passes', () => {
+    expect(checkGuard('Edit', { file_path: `${ROOT}/test/price.test.js`, old_string: 'equal(x, 1)', new_string: 'equal(x, 2)' }, ROOT)).toBe(null)
+    expect(checkGuard('Edit', { file_path: `${ROOT}/test/a.test.js`, old_string: "test('a', f)", new_string: "test('a', f)\ntest('b', g)" }, ROOT)).toBe(null)
+    expect(checkGuard('Write', { file_path: `${ROOT}/test/new.test.js`, content: "test('a', () => {})" }, ROOT, null)).toBe(null)
+  })
+
   test('.skip outside a test file is not the guard\'s business', () => {
     expect(checkGuard('Edit', { file_path: `${ROOT}/src/list.js`, new_string: 'list.skip(2)' }, ROOT)).toBe(null)
   })

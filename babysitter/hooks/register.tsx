@@ -209,7 +209,18 @@ async function guardCall($: $, a: AgentRec, tool: string, input: Record<string, 
   } catch {
     return null
   }
-  const reason = checkGuard(tool, input, root)
+  // A Write over a whole test file: read what it replaces, to count the tests it would drop.
+  let current: string | null = null
+  const path = input.file_path
+  if (tool === 'Write' && typeof path === 'string' && /(^|\/)(tests?|__tests__)\/|\.(test|spec)\./.test(path)) {
+    try {
+      const read = await $.fs.read(path.startsWith('/') ? path : `${root}/${path}`)
+      current = typeof read === 'string' ? read : null
+    } catch {
+      current = null
+    }
+  }
+  const reason = checkGuard(tool, input, root, current)
   if (reason === null) return null
   const what = brief(tool, input)
   if (cfg.guard === 'ask') {
