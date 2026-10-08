@@ -422,7 +422,8 @@ async function escalate($: $, id: string, f: Finding) {
   if (step === 'skip') return
 
   let fix = ''
-  if (f.kind !== 'manual') {
+  // The budget is a hard limit the person set: no judge talks it down.
+  if (f.kind !== 'manual' && f.kind !== 'budget') {
     const verdict = await askJudge($, a, f)
     if (verdict !== null && !verdict.isStuck) {
       announce($, a, f, 'judge says it is progressing: leaving it alone')
@@ -725,7 +726,7 @@ export const register: Register = (on, options) => {
       return { text: `Judge on ${lastJudge.who}\n\n── sent to Haiku ──\n${lastJudge.prompt}\n\n── answer ──\n${lastJudge.answer}` }
     }
     if (arg === 'json') {
-      return { text: JSON.stringify({ mode: cfg.mode, isEnabled: mem.isEnabled, agents: mem.agents, incidents: mem.incidents }) }
+      return { text: JSON.stringify({ mode: cfg.mode, settings: cfg, isEnabled: mem.isEnabled, agents: mem.agents, incidents: mem.incidents }) }
     }
     if (arg === 'report') {
       const reported = new Set(await getReported($))

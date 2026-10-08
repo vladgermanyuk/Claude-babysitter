@@ -305,3 +305,13 @@ describe('guard', () => {
     expect(w.ran).toEqual(['git push origin main'])
   })
 })
+
+test('/babysit json shows the settings in force', { options: OPTIONS }, async ($, on) => {
+  mock.clock(on, { now: 1_000_000 })
+  world(on)
+  await start($)
+  const settings = (await state($) as unknown as { settings: { th: { tokenBudget: number; stallMs: number }; guard: string } }).settings
+  expect(settings.th.tokenBudget).toBe(2_000_000)
+  expect(settings.th.stallMs).toBe(180_000)
+  expect(settings.guard).toBe('block')
+})
