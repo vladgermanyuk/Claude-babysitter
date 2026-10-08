@@ -10,6 +10,7 @@ import type { AgentRec, Incident } from '../types'
 
 function world(on: On, opts: { refuseRespawn?: boolean; judge?: string } = {}) {
   const stopped: string[] = []
+  const ran: string[] = []
   const spawned: { prompt: string; description: string }[] = []
   const toasts: string[] = []
   const files: { path: string; text: string }[] = []
@@ -50,9 +51,10 @@ function world(on: On, opts: { refuseRespawn?: boolean; judge?: string } = {}) {
       return { result: { message: 'stopped' }, text: 'stopped' } as never
     }
     if (e.tool === 'PushNotification') return { result: {}, text: 'sent' } as never
+    if (e.tool === 'Bash') ran.push(e.command)
     return { isError: true, result: 'ls: /x: No such file or directory', text: 'ls: /x: No such file or directory' } as never
   })
-  return { stopped, spawned, toasts, files, judged }
+  return { stopped, spawned, toasts, files, judged, ran }
 }
 
 const OPTIONS = { useHaiku: false, push: false }
@@ -279,5 +281,27 @@ describe('judge', () => {
     expect(r.text).toContain('Judge on #1 Fix flaky test')
     expect(r.text).toContain('── sent to Haiku ──')
     expect(r.text).toContain('VERDICT: NO_PROGRESS')
+  })
+})
+
+describe('guard', () => {
+  test('a subagent\'s git push never runs, and it is told why', { options: OPTIONS }, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await spawnAgent($, 'Make CI green')
+    const r = await ($ as Engine).tool.call({ tool: 'Bash', command: 'git push origin main', agentId: 'ag1', tool_use_id: 'push1' })
+    expect(w.ran).toEqual([])
+    expect(JSON.stringify(r)).toContain('[babysitter] Blocked: pushing is out of scope')
+    const { incidents } = await state($)
+    expect(incidents.map(i => [i.kind, i.action])).toEqual([['guard', 'blocked']])
+  })
+
+  test('the main session is not guarded: it is the person\'s own', { options: OPTIONS }, async ($, on) => {
+    mock.clock(on, { now: 1_000_000 })
+    const w = world(on)
+    await start($)
+    await ($ as Engine).tool.call({ tool: 'Bash', command: 'git push origin main', tool_use_id: 'push2' })
+    expect(w.ran).toEqual(['git push origin main'])
   })
 })

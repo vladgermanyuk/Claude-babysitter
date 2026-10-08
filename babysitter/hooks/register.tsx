@@ -5,6 +5,7 @@ import { IGNORED_TOOLS, brief, clip, detect, oneLine, redact, signature, toolInp
 import type { Finding, Thresholds } from './detectors'
 import { correctionMessage, decide, diagnosisPrompt, isMode, respawnPrompt, retriesOf } from './interventions'
 import type { Mode } from './interventions'
+import { checkGuard } from './guard'
 import { judgePrompt, parseVerdict } from './judge'
 import type { Verdict } from './judge'
 import { duration, headline, iconOf, markdown, summaryPrompt } from './report'
@@ -38,6 +39,7 @@ function settings(o: PluginOptions) {
     maxRetries: typeof o.maxRetries === 'number' && o.maxRetries >= 0 ? o.maxRetries : 1,
     useHaiku: o.useHaiku !== false,
     judge: o.judge !== false,
+    guard: o.guard === 'ask' || o.guard === 'off' ? o.guard : 'block',
     push: o.push !== false,
   }
 }
@@ -188,11 +190,43 @@ let lastJudge: { who: string; prompt: string; answer: string } | null = null
 
 // ---------- bookkeeping ----------
 
-async function incident($: $, a: AgentRec, kind: Finding['kind'], detail: string, action: ActionKind) {
+async function incident($: $, a: AgentRec, kind: Finding['kind'] | 'guard', detail: string, action: ActionKind) {
   const at = await $.clock.now()
   await updateIncidents($, list =>
     [...list, { at, agentId: a.id, description: a.description, kind, detail: redact(detail), action }].slice(-200))
   $.ui.toast(`🍼 ${action}: ${label(a)} (${kind})`)
+}
+
+/**
+ * The guard, before a subagent's call runs: null to let it run, or the refusal
+ * the agent reads instead of a result. In `ask` mode the person decides.
+ */
+async function guardCall($: $, a: AgentRec, tool: string, input: Record<string, unknown>): Promise<string | null> {
+  if (cfg.guard === 'off') return null
+  let root = ''
+  try {
+    root = await $.session.cwd()
+  } catch {
+    return null
+  }
+  const reason = checkGuard(tool, input, root)
+  if (reason === null) return null
+  const what = brief(tool, input)
+  if (cfg.guard === 'ask') {
+    let answer = 'Block'
+    try {
+      answer = await $.ui.ask(`${label(a)} wants to run ${oneLine(what, 80)}: ${reason}. Allow it?`, ['Block', 'Allow'])
+    } catch {
+      answer = 'Block'
+    }
+    if (answer === 'Allow') {
+      await incident($, a, 'guard', `${what}: ${reason} (you allowed it)`, 'allowed')
+      return null
+    }
+  }
+  $.ui.log(`🛑 babysitter blocked ${label(a)}: ${oneLine(what, 100)} (${reason})`)
+  await incident($, a, 'guard', `${what}: ${reason}`, 'blocked')
+  return `[babysitter] Blocked: ${reason}. That is outside what this task allows without a human. Do the task another way, or stop and report that it needs a human decision.`
 }
 
 /** One line in the transcript, said before the mod acts: what it saw and what it does next. */
@@ -607,11 +641,13 @@ export const register: Register = (on, options) => {
       return r
     }
 
+    const watched = (await getAgents($))[id]
+    const refusal = watched === undefined ? null : await guardCall($, watched, e.tool, input)
     const startedAt = await $.clock.now()
     await patch($, id, a => ({ ...a, inFlight: a.inFlight + 1, lastActivityAt: startedAt }))
     let r
     try {
-      r = await next(e)
+      r = refusal === null ? await next(e) : { deny: refusal }
     } catch (err) {
       await patch($, id, a => ({ ...a, inFlight: Math.max(0, a.inFlight - 1) }))
       throw err

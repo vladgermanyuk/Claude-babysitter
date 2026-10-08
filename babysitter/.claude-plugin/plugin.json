@@ -1,6 +1,6 @@
 {
   "name": "babysitter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Watches your background agents, corrects the ones that loop, stall or error out, and reports when they are done.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -20,6 +20,13 @@
     "tokenBudget": { "type": "number", "title": "Token budget per agent", "description": "Tokens an agent may process (input, cache and output) before it counts as over budget. 0 turns it off.", "default": 2000000 },
     "useHaiku": { "type": "boolean", "title": "Diagnose with Haiku", "description": "Ask Haiku to diagnose a stuck agent and to summarise the report.", "default": true },
     "judge": { "type": "boolean", "title": "Judge before acting", "description": "Before stepping in, ask Haiku whether the flagged agent is really stuck (VERDICT: NO_PROGRESS) or still progressing.", "default": true },
+    "guard": {
+      "type": "string",
+      "title": "Guard",
+      "description": "What to do when a subagent tries git push, --no-verify, deleting or skipping tests, or writing outside the project. block: refuse it. ask: ask you. off: let it.",
+      "options": ["block", "ask", "off"],
+      "default": "block"
+    },
     "push": { "type": "boolean", "title": "Push the report", "description": "Send the final report line as a push notification when you are away.", "default": true }
   }
 }
