@@ -31,6 +31,10 @@ describe('C2: what the agent is told', () => {
     expect(text).toContain('Diagnosis: The directory does not exist')
   })
 
+  test('it says how far the agent has got by the time it is written', () => {
+    expect(correctionMessage(f, '', { calls: 5, errors: 5 })).toContain('So far in this task: 5 tool calls, 5 of them failed.')
+  })
+
   test('without a diagnosis it falls back to advice for the detector', () => {
     expect(correctionMessage(f, '')).toContain('Repeating the same call will not change the result')
   })

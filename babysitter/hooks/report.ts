@@ -87,7 +87,7 @@ export function markdown(r: ReportInput): string {
 /** What Haiku is asked to summarise the run. */
 export function summaryPrompt(r: ReportInput): string {
   const agents = r.agents
-    .map(a => `- ${a.description} [${a.status}${a.retryOf !== null ? ', respawn' : ''}]: ${redact(oneLine(a.answer, 300)) || '(no answer captured)'}`)
+    .map(a => `- ${a.description} [${a.status}${a.retryOf !== null ? ', respawn' : ''}]: ${redact(oneLine(a.answer, 1500)) || '(no answer captured)'}`)
     .join('\n')
   const incidents = r.incidents.map(i => `- ${i.action} ${i.description}: ${i.kind} ${redact(oneLine(i.detail, 160))}`).join('\n')
   return [

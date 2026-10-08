@@ -12,7 +12,7 @@ import { duration, headline, iconOf, markdown, summaryPrompt } from './report'
 import type { ReportInput } from './report'
 
 const PANE = 'babysitter'
-const TICK_MS = 2000
+const TICK_MS = 1000
 const REPORT_SETTLE_MS = 4000
 
 
@@ -323,7 +323,9 @@ async function clear($: $, a: AgentRec, f: Finding, reason: string) {
 /** Step 1: write the fix into the agent's own conversation. */
 async function correct($: $, a: AgentRec, f: Finding, fix = ''): Promise<boolean> {
   const diagnosis = fix !== '' ? fix : await diagnose($, a, f)
-  const text = correctionMessage(f, diagnosis)
+  // The judge took a few seconds and the agent kept going: count from now, not from when it was flagged.
+  const fresh = mem.agents[a.id] ?? a
+  const text = correctionMessage(f, diagnosis, { calls: fresh.toolCalls, errors: fresh.errors })
   let isWritten = false
   try {
     const r = await $.session.append({ agentId: a.id, message: { type: 'user', content: [{ type: 'text', text }] } })
@@ -666,6 +668,8 @@ export const register: Register = (on, options) => {
       consecutiveErrors: isError ? a.consecutiveErrors + 1 : 0,
       recent: [...a.recent, call].slice(-20),
     }))
+    // Look now rather than at the next tick: every second the agent keeps going is another wasted call.
+    $.clock.after(0, () => void tick($))
     return r
   })
 

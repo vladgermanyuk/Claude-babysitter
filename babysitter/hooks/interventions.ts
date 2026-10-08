@@ -33,9 +33,10 @@ export function diagnosisPrompt(a: AgentRec, f: Finding): string {
 }
 
 /** The message written into a stuck agent's own conversation. */
-export function correctionMessage(f: Finding, diagnosis: string): string {
+export function correctionMessage(f: Finding, diagnosis: string, soFar?: { calls: number; errors: number }): string {
   return [
     `[babysitter] I am watching your progress and you look stuck: ${f.detail}.`,
+    ...(soFar === undefined ? [] : [`So far in this task: ${soFar.calls} tool calls, ${soFar.errors} of them failed.`]),
     diagnosis !== '' ? `Diagnosis: ${diagnosis}` : ADVICE[f.kind],
     'Change your approach now. If you cannot make progress, stop and return a partial result that explains what blocked you.',
   ].join('\n')
